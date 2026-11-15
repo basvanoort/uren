@@ -1,13 +1,13 @@
 :root {
   --bg: #f5f6f8; --kaart: #fff; --tekst: #16181d; --zacht: #667085; --lijn: #e2e5ea;
   --accent: #1f6feb; --accent-tekst: #fff; --goed: #17803d; --fout: #c62828; --let-op: #b25e09;
-  --let-op-bg: #fff3e0;
+  --let-op-bg: #fff3e0; --start: #1a7f37; --stop: #cf222e;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #14161a; --kaart: #1e2127; --tekst: #eceef2; --zacht: #98a2b3; --lijn: #30343c;
     --accent: #4c8dff; --accent-tekst: #0b1220; --goed: #4cc38a; --fout: #ff6b6b; --let-op: #f2a647;
-    --let-op-bg: #3a2a12;
+    --let-op-bg: #3a2a12; --start: #238636; --stop: #da3633;
   }
 }
 * { box-sizing: border-box; }
@@ -27,6 +27,9 @@ button {
 }
 button.primair { background: var(--accent); color: var(--accent-tekst); border-color: var(--accent); font-weight: 600; }
 button.gevaar { color: var(--fout); }
+button.start { background: var(--start); border-color: var(--start); color: #fff; font-weight: 600; }
+button.stop { background: var(--stop); border-color: var(--stop); color: #fff; font-weight: 600; }
+button:disabled { opacity: .55; }
 button.groot { width: 100%; font-size: 1.25rem; padding: 18px; }
 button.klein { min-height: 36px; padding: 6px 10px; }
 input, select, textarea {
@@ -103,4 +106,5 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   background: var(--fout); color: #fff; border-radius: 10px; padding: 10px 14px; display: none; z-index: 10;
 }
 #melding.toon { display: block; }
+.token { font-family: ui-monospace, Menlo, monospace; font-size: .85rem; overflow-wrap: anywhere; user-select: all; background: var(--bg); border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
 .demo { background: var(--let-op-bg); color: var(--let-op); border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; font-size: .9rem; }

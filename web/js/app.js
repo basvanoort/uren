@@ -11,11 +11,13 @@ const LOCATIES = { '': '—', kantoor: 'Kantoor', thuis: 'Thuis', onderweg: 'Ond
 const DAGEN = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'];
 
 let store, sessie;
-let S = { klanten: [], projecten: [], entries: [], verdeling: [], contract_perioden: [] };
+let S = { klanten: [], projecten: [], entries: [], verdeling: [], contract_perioden: [], api_tokens: [] };
 let tab = 'vandaag';
 let week = C.maandag(C.vandaag());
 let maand = C.vandaag().slice(0, 7);
 let dlg = null;
+let spraak = { bezig: false, melding: '' }; // toestand van het spraakveld
+let nieuwToken = ''; // net aangemaakt Siri-token, één keer zichtbaar
 
 // ---------- data ----------
 
@@ -133,12 +135,12 @@ function schermVandaag() {
     const rijen = rijenVan(l.id);
     klok = `<div class="status">Klok loopt sinds ${uur(l.start)}<b>${C.fmt(netto(l))}</b>
         <span class="zacht">${rijen.length ? esc(rijen.map((r) => projNaam(r.project_id)).join(', ')) : 'nog geen project'}</span></div>
-      <button class="primair groot" data-act="stop">Stop</button>
+      <button class="stop groot" data-act="stop">Stop</button>
       ${S.projecten.some((p) => p.actief) ? `<h2>${rijen.length ? 'Wissel naar' : 'Kies project'}</h2>
         <div class="chips">${chips(rijen.length ? 'wissel' : 'koppel-lopend')}</div>` : ''}`;
   } else {
     const sd = standaarddag();
-    klok = `<button class="primair groot" data-act="start">Start</button>
+    klok = `<button class="start groot" data-act="start">Start</button>
       ${S.projecten.some((p) => p.actief) ? `<h2>Start op project</h2><div class="chips">${chips('start')}</div>` : ''}
       ${lijst.length ? '' : `<div class="chips"><button data-act="standaarddag">Standaarddag ${sd.start}–${sd.eind}</button></div>`}`;
   }
@@ -151,6 +153,12 @@ function schermVandaag() {
     </div>
     <div class="kaart">${klok}</div>
     ${lijst.length ? `<h2>Vandaag</h2><div class="kaart">${lijst.map(entryRij).join('')}</div>` : ''}
+    ${store.demo ? '' : `<form class="kaart" data-form="spraak">
+      <label>Zeg of typ wat je gewerkt hebt
+        <input name="tekst" placeholder="gisteren half negen tot vijf, half uur pauze" autocomplete="off" required ${spraak.bezig ? 'disabled' : ''}></label>
+      <div class="rij" style="margin-top:8px"><span class="groei ${spraak.melding ? 'min' : 'zacht'}" style="font-size:.85rem">${esc(spraak.melding || 'Tik op de microfoon van je toetsenbord om te dicteren.')}</span>
+        <button class="primair" ${spraak.bezig ? 'disabled' : ''}>${spraak.bezig ? 'Bezig…' : 'Verwerk'}</button></div>
+    </form>`}
     <div class="chips"><button data-act="nieuw" data-datum="${dag}">＋ Handmatig invoeren</button></div>
     ${openLijst.length ? `<h2>Nog toe te wijzen (${openLijst.length})</h2>
       <div class="kaart">${openLijst.slice(0, 8).map((e) =>
@@ -334,7 +342,18 @@ function schermBeheer() {
       <label>Eind<input type="time" name="eind" value="${sd.eind}"></label>
       <label class="breed">Pauze (minuten)<input inputmode="numeric" name="pauze" value="${sd.pauze}"></label>
     </div>
-    ${store.demo ? '' : `<h2>Account</h2><div class="kaart rij"><span class="groei">${esc(sessie.email)}</span>
+    ${store.demo ? '' : `<h2>Siri-opdrachten</h2>
+    <div class="kaart">
+      ${S.api_tokens.map((t) => `<div class="rij" style="margin-bottom:8px"><span class="groei">${esc(t.naam)}
+        <span class="zacht" style="font-size:.85rem">· ${t.laatst_gebruikt ? `laatst gebruikt ${esc(dagLabel(t.laatst_gebruikt.slice(0, 10)))}` : 'nog niet gebruikt'}</span></span>
+        <button class="klein gevaar" data-act="token-weg" data-id="${t.id}">Intrekken</button></div>`).join('')}
+      ${nieuwToken ? `<p style="margin:0 0 4px">Kopieer dit token nu; het wordt niet opnieuw getoond.</p>
+        <div class="token">${esc(nieuwToken)}</div>
+        <p class="zacht" style="font-size:.85rem;margin:8px 0 4px">Adres voor de opdrachten:</p>
+        <div class="token">${esc(store.functieUrl)}</div>` : ''}
+      <div class="rij"><button data-act="token-nieuw">Nieuw token</button>
+        <a class="zacht" style="font-size:.85rem" href="https://github.com/basvanoort/uren/blob/main/docs/siri.md" target="_blank" rel="noopener">Zo maak je de opdrachten</a></div>
+    </div>` + `<h2>Account</h2><div class="kaart rij"><span class="groei">${esc(sessie.email)}</span>
       <button data-act="logout">Uitloggen</button></div>`}`;
 }
 
@@ -360,11 +379,19 @@ function render() {
 
 // ---------- bewerkvenster ----------
 
-function openDlg(entry, datum) {
-  const e = entry ? { ...entry } : {
+// entry = bestaande registratie; concept = voorstel uit spraakinvoer; anders een lege regel op datum.
+function openDlg(entry, datum, concept) {
+  const c = concept?.entry;
+  const e = entry ? { ...entry } : c ? {
+    id: uid(), datum: c.datum, type: c.type, duur_min: c.duur_min, pauze_min: c.pauze_min,
+    locatie: c.locatie, notitie: c.notitie, bron: 'spraak',
+    start: c.start ? isoVan(c.datum, c.start) : null,
+    eind: c.start && c.eind ? isoVan(c.eind <= c.start ? C.plusDagen(c.datum, 1) : c.datum, c.eind) : null,
+  } : {
     id: uid(), datum, type: 'werk', start: null, eind: null, duur_min: null,
     pauze_min: 0, locatie: null, notitie: '', bron: 'app',
   };
+  const bron = concept ? concept.rijen.map((r) => ({ id: uid(), ...r })) : rijenVan(e.id);
   dlg = {
     nieuw: !entry,
     e,
@@ -373,7 +400,7 @@ function openDlg(entry, datum) {
       duur: e.duur_min != null ? C.fmt(e.duur_min) : '', pauze: String(e.pauze_min || 0),
       locatie: e.locatie || '', notitie: e.notitie || '',
     },
-    rijen: rijenVan(e.id).map((r) => ({
+    rijen: bron.map((r) => ({
       id: r.id, project_id: r.project_id,
       aandeel: r.aandeel_min != null ? C.fmt(r.aandeel_min) : String(r.aandeel_pct),
       aandeelEenheid: r.aandeel_min != null ? 'uur' : 'pct',
@@ -394,7 +421,7 @@ function tekenDlg() {
     <option value="pct" ${gekozen === 'pct' ? 'selected' : ''}>%</option>
     <option value="uur" ${gekozen === 'uur' ? 'selected' : ''}>uur</option></select>`;
   const keuze = S.projecten.filter((p) => p.actief || rijen.some((r) => r.project_id === p.id));
-  $('#dlg').innerHTML = `<form method="dialog" id="dlgform">
+  $('#dlg').innerHTML = `<form method="dialog" id="dlgform" tabindex="-1" autofocus style="outline:none">
     <div class="raster">
       <label>Datum<input type="date" name="datum" value="${v.datum}" required></label>
       <label>Soort<select name="type">${opties(TYPES, v.type)}</select></label>
@@ -500,6 +527,17 @@ const acties = {
     if (laatste) await bewaar('contract_perioden', { ...laatste, geldig_tot: C.plusDagen(dag, -1) });
     await bewaar('contract_perioden', { id: uid(), geldig_vanaf: dag, geldig_tot: null, norm_min: laatste ? [...laatste.norm_min] : [480, 480, 480, 480, 480, 0, 0] });
   },
+  async 'token-nieuw'() {
+    const token = `uren_${[...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    await bewaar('api_tokens', {
+      id: uid(), naam: `Siri (${dagLabel(C.vandaag(), { day: 'numeric', month: 'short' })})`,
+      token_hash: [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join(''),
+      laatst_gebruikt: null,
+    });
+    nieuwToken = token;
+  },
+  async 'token-weg'(d) { nieuwToken = ''; await verwijder('api_tokens', d.id); },
   'dlg-sluit'() { $('#dlg').close(); },
   'dlg-bewaar'() { return bewaarDlg(); },
   async 'entry-weg'() { $('#dlg').close(); await verwijder('entries', dlg.e.id); },
@@ -562,6 +600,17 @@ document.addEventListener('submit', async (ev) => {
   if (form.dataset.form === 'project') {
     await bewaar('projecten', { id: uid(), klant_id: f.get('klant_id'), naam: f.get('naam').trim(), standaard_facturabel_pct: 100, actief: true });
   }
+  if (form.dataset.form === 'spraak') {
+    spraak = { bezig: true, melding: '' };
+    render();
+    try {
+      const res = await store.functie({ actie: 'parse', tekst: f.get('tekst') });
+      spraak = { bezig: false, melding: res.fout ? res.bericht : '' };
+      render();
+      if (!res.fout) openDlg(null, null, res.concept);
+    } catch (e) { spraak = { bezig: false, melding: e.message }; render(); }
+    return;
+  }
   if (form.dataset.form === 'login') {
     try {
       if (f.get('actie') === 'registreer') {
@@ -588,4 +637,7 @@ async function begin() {
 store = await maakStore();
 await begin();
 // Houd de lopende klok en de dagwissel bij zonder een open venster te verstoren.
-setInterval(() => { if (sessie && tab === 'vandaag' && !$('#dlg').open) render(); }, 30000);
+setInterval(() => {
+  const typt = document.activeElement?.matches?.('#scherm input');
+  if (sessie && tab === 'vandaag' && !$('#dlg').open && !typt && !spraak.bezig) render();
+}, 30000);

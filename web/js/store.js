@@ -2,9 +2,10 @@
 //   laad() -> { klanten, projecten, entries, verdeling, contract_perioden }
 //   bewaar(tabel, rij), verwijder(tabel, id)
 //   sessie(), login(email, wachtwoord), registreer(email, wachtwoord), logout()
+//   functie(body) -> antwoord van de Edge Function 'uren' (spraak); functieUrl voor Siri-opdrachten
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
-export const TABELLEN = ['klanten', 'projecten', 'entries', 'verdeling', 'contract_perioden'];
+export const TABELLEN = ['klanten', 'projecten', 'entries', 'verdeling', 'contract_perioden', 'api_tokens'];
 
 function lokaleStore() {
   const SLEUTEL = 'uren-demo';
@@ -22,6 +23,8 @@ function lokaleStore() {
     async sessie() { return { email: 'demo' }; },
     async login() {},
     async registreer() { return true; },
+    functieUrl: '',
+    async functie() { throw new Error('Spraakinvoer werkt niet in demo-modus.'); },
     async logout() {},
     async laad() { return lees(); },
     async bewaar(tabel, rij) {
@@ -60,6 +63,12 @@ async function supabaseStore() {
       return Boolean(session);
     },
     async logout() { await sb.auth.signOut(); },
+    functieUrl: `${SUPABASE_URL}/functions/v1/uren`,
+    async functie(body) {
+      const { data, error } = await sb.functions.invoke('uren', { body });
+      if (error) throw new Error('De spraakdienst is niet bereikbaar.');
+      return data;
+    },
     async laad() {
       const lijsten = await Promise.all(TABELLEN.map(async (t) => ok(await sb.from(t).select('*'))));
       return Object.fromEntries(TABELLEN.map((t, i) => [t, lijsten[i]]));

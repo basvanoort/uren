@@ -10,6 +10,8 @@ Eén webapp voor iPhone (op het beginscherm) en desktop; data in Supabase (proje
   - `js/store.js` – opslag: Supabase, of demo-modus in de browser als `js/config.js` leeg is
   - `js/app.js` – schermen: Vandaag, Week, Rapport, Beheer
 - `supabase/migrations/` – databaseschema (al toegepast op het project)
+- `supabase/functions/uren/` – Edge Function voor spraakinvoer en Siri-opdrachten (zie `docs/siri.md`);
+  heeft de secret `ANTHROPIC_API_KEY` nodig
 
 ## Rekenregels
 
@@ -32,6 +34,5 @@ Elke push naar `main` draait de tests en publiceert `web/` via GitHub Pages
 ## Nog te doen
 
 - Site URL in Supabase instellen op het adres van de app
-- Spraakinvoer en Siri-opdrachten (Edge Function die tekst omzet naar een conceptregel)
 - Nachtelijke back-up naar pCloud
 - PDF-export

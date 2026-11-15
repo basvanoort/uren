@@ -2,5 +2,5 @@
   "name": "uren",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test", "start": "python3 -m http.server 8080 -d web" }
+  "scripts": { "test": "node --experimental-strip-types --test", "start": "python3 -m http.server 8080 -d web" }
 }
