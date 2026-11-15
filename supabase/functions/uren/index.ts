@@ -54,11 +54,9 @@ async function projectenVan(userId: string): Promise<Project[]> {
 
 async function vraagModel(tekst: string, projecten: Project[]): Promise<Ruw> {
   const anthropic = new Anthropic(); // leest ANTHROPIC_API_KEY uit de secrets van de functie
-  const res = await anthropic.beta.messages.create({
-    model: "claude-opus-5-5",
+  const res = await anthropic.messages.create({
+    model: "claude-haiku-5-5",
     max_tokens: 4000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
     output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
     system: systeemPrompt(projecten),
     messages: [{ role: "user", content: tekst }],
