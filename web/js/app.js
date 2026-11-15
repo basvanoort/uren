@@ -316,14 +316,14 @@ function schermBeheer() {
     </div>
     <h2>Projecten</h2>
     <div class="kaart">
-      ${S.projecten.map((p) => `<div class="rij" style="margin-bottom:8px">
-        <input class="groei" value="${esc(p.naam)}" aria-label="Naam project" ${veld('projecten', p, 'naam')}>
-        <select style="width:auto;max-width:38%" aria-label="Klant" ${veld('projecten', p, 'klant_id')}>${klantOpties(p.klant_id)}</select>
+      ${S.projecten.map((p) => `<div class="rij" style="margin-bottom:14px">
+        <input style="flex:1 1 100%" value="${esc(p.naam)}" aria-label="Naam project" ${veld('projecten', p, 'naam')}>
+        <select class="groei" style="width:auto" aria-label="Klant" ${veld('projecten', p, 'klant_id')}>${klantOpties(p.klant_id)}</select>
         <input style="width:64px" inputmode="numeric" value="${p.standaard_facturabel_pct}" aria-label="Standaard facturabel procent" ${veld('projecten', p, 'standaard_facturabel_pct')}>%
         <label class="rij"><input type="checkbox" style="width:auto;min-height:0" ${p.actief ? 'checked' : ''} ${veld('projecten', p, 'actief')}> actief</label></div>`).join('')}
       ${S.klanten.length ? `<form class="rij" data-form="project">
-        <input class="groei" name="naam" placeholder="Nieuw project" required>
-        <select name="klant_id" style="width:auto;max-width:38%" aria-label="Klant">${klantOpties()}</select>
+        <input style="flex:1 1 100%" name="naam" placeholder="Nieuw project" required>
+        <select class="groei" name="klant_id" style="width:auto" aria-label="Klant">${klantOpties()}</select>
         <button class="primair">Toevoegen</button></form>
         <p class="zacht" style="font-size:.85rem;margin:8px 0 0">Het percentage is het standaard facturabele deel; per registratie kun je ervan afwijken.</p>`
       : '<p class="zacht">Voeg eerst een klant toe.</p>'}

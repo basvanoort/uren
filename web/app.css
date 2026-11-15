@@ -34,9 +34,15 @@ button.groot { width: 100%; font-size: 1.25rem; padding: 18px; }
 button.klein { min-height: 36px; padding: 6px 10px; }
 input, select, textarea {
   border: 1px solid var(--lijn); background: var(--kaart); border-radius: 8px;
-  padding: 9px 10px; min-height: 42px; width: 100%; min-width: 0;
+  padding: 0 10px; height: 44px; width: 100%; min-width: 0; max-width: 100%; display: block;
 }
-label { display: block; font-size: .8rem; color: var(--zacht); }
+input[type=checkbox] { display: inline-block; height: auto; }
+/* Safari op iOS geeft datum- en tijdvelden een eigen hoogte, breedte en centrering. */
+input[type=date], input[type=time], input[type=month] {
+  -webkit-appearance: none; appearance: none; line-height: 42px; text-align: left;
+}
+input::-webkit-date-and-time-value { text-align: left; margin: 0; }
+label { display: block; font-size: .8rem; color: var(--zacht); min-width: 0; }
 label > input, label > select, label > textarea { margin-top: 3px; color: var(--tekst); font-size: 1rem; }
 
 #tabs {
@@ -83,13 +89,14 @@ tr.totaal td { font-weight: 700; border-top: 2px solid var(--lijn); }
 tr.klant td { font-weight: 600; }
 td.inspring { padding-left: 22px; }
 
-.raster { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.raster { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .raster .breed { grid-column: 1 / -1; }
-.norm7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.norm7 input { padding: 8px 2px; text-align: center; }
-.vrij { border-top: 1px solid var(--lijn); padding-top: 10px; margin-top: 10px; display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+.norm7 { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.norm7 input { padding: 0 2px; text-align: center; }
+.vrij { border-top: 1px solid var(--lijn); padding-top: 10px; margin-top: 10px; display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .vrij .breed { grid-column: 1 / -1; }
-.duo { display: flex; gap: 4px; }
+.duo { display: flex; gap: 4px; margin-top: 3px; }
+.duo input { flex: 1; }
 .duo select { width: 76px; flex: none; }
 
 dialog {
