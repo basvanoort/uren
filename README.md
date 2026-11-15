@@ -19,6 +19,11 @@ Eén webapp voor iPhone (op het beginscherm) en desktop; data in Supabase (proje
 - Een registratie zonder projectverdeling is "open" en telt wel mee voor het saldo.
 - Verdeling en facturabel worden opgeslagen zoals ingevoerd: als percentage of als minuten.
 
+## Hosting
+
+Elke push naar `main` draait de tests en publiceert `web/` via GitHub Pages
+(`.github/workflows/pages.yml`). De app staat op https://basvanoort.github.io/uren/.
+
 ## Ontwikkelen
 
     npm test     # rekenregels
@@ -26,7 +31,7 @@ Eén webapp voor iPhone (op het beginscherm) en desktop; data in Supabase (proje
 
 ## Nog te doen
 
-- Hosting (GitHub Pages) en Site URL in Supabase instellen
+- Site URL in Supabase instellen op het adres van de app
 - Spraakinvoer en Siri-opdrachten (Edge Function die tekst omzet naar een conceptregel)
 - Nachtelijke back-up naar pCloud
 - PDF-export
