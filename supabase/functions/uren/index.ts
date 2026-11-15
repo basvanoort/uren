@@ -1,7 +1,7 @@
 // Edge Function "uren": spraakinvoer voor de app en een kleine API voor Siri-opdrachten.
 //
 // POST met JSON { actie, ... } en header Authorization: Bearer <sessie-JWT of persoonlijk token>
-//   parse     { tekst }            -> { bericht, id, concept }   tekst naar conceptregel, slaat niets op
+//   parse     { tekst, standaarddag? } -> { bericht, id, concept }   tekst naar conceptregel, slaat niets op
 //   bevestig  { id }               -> { bericht }                slaat een eerder concept op
 //   klok      { richting, project? } -> { bericht }              richting: "in" of "uit"
 // Elk antwoord heeft een veld "bericht" dat een opdracht direct kan tonen of voorlezen.
@@ -10,7 +10,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk";
 import {
   type Concept, lokaalNaarUtc, normaliseer, nuLokaal, plusDag, type Project, type Ruw,
-  samenvatting, SCHEMA, systeemPrompt, zoekProject,
+  type Standaarddag, samenvatting, SCHEMA, systeemPrompt, zoekProject,
 } from "./logica.ts";
 
 const CORS = {
@@ -68,9 +68,11 @@ async function vraagModel(tekst: string, projecten: Project[]): Promise<Ruw> {
   return JSON.parse(blok.text) as Ruw;
 }
 
-async function parse(user: { id: string; bron: string }, tekst: string) {
+async function parse(user: { id: string; bron: string }, tekst: string, standaard: Standaarddag | null) {
   const projecten = await projectenVan(user.id);
-  const concept = normaliseer(await vraagModel(tekst, projecten), projecten);
+  const { data: contracten } = await db.from("contract_perioden")
+    .select("geldig_vanaf, geldig_tot, norm_min").eq("user_id", user.id);
+  const concept = normaliseer(await vraagModel(tekst, projecten), projecten, { standaard, contracten: contracten ?? [] });
   const { data, error } = await db.from("spraak_log")
     .insert({ user_id: user.id, transcript: tekst, concept, bron: user.bron }).select("id").single();
   if (error) throw new Error(error.message);
@@ -147,7 +149,10 @@ Deno.serve(async (req: Request) => {
         const tekst = String(body.tekst ?? "").trim();
         if (!tekst) throw new Error("Ik heb geen tekst ontvangen.");
         if (tekst.length > 2000) throw new Error("De tekst is te lang; houd het bij één registratie.");
-        return antwoord(await parse(user, tekst));
+        const sd = body.standaarddag;
+        const standaard = sd && typeof sd === "object"
+          ? { start: String(sd.start ?? ""), eind: String(sd.eind ?? ""), pauze: Number(sd.pauze) || 0 } : null;
+        return antwoord(await parse(user, tekst, standaard));
       }
       case "bevestig": return antwoord(await bevestig(user, String(body.id ?? "")));
       case "klok": return antwoord(await klok(user, String(body.richting ?? ""), String(body.project ?? "")));

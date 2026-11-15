@@ -604,7 +604,7 @@ document.addEventListener('submit', async (ev) => {
     spraak = { bezig: true, melding: '' };
     render();
     try {
-      const res = await store.functie({ actie: 'parse', tekst: f.get('tekst') });
+      const res = await store.functie({ actie: 'parse', tekst: f.get('tekst'), standaarddag: standaarddag() });
       spraak = { bezig: false, melding: res.fout ? res.bericht : '' };
       render();
       if (!res.fout) openDlg(null, null, res.concept);

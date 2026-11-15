@@ -7,7 +7,7 @@ const projecten = [
   { id: 'p2', naam: 'Intern', klant: 'Acme', standaard_facturabel_pct: 0 },
 ];
 const ruw = (extra = {}) => ({
-  begrepen: true, vraag: '', datum: '2026-12-01', type: 'werk', start: '08:30', eind: '17:00',
+  begrepen: true, vraag: '', hele_dag: false, datum: '2026-12-01', type: 'werk', start: '08:30', eind: '17:00',
   duur_min: null, pauze_min: 30, locatie: null, notitie: '', projecten: [], ...extra,
 });
 
@@ -57,6 +57,20 @@ test('normaliseer: alleen duur, en hele dag verlof', () => {
   const verlof = L.normaliseer(ruw({ type: 'verlof', start: null, eind: null, pauze_min: 0, projecten: [{ project_id: 'p1', aandeel_min: null, facturabel_min: null, facturabel_pct: null }] }), projecten);
   assert.deepEqual(verlof.rijen, []);
   assert.equal(L.samenvatting(verlof, projecten), 'dinsdag 1 december, verlof');
+});
+
+test('hele dag gewerkt: standaarddag, anders norm, anders 8 uur', () => {
+  const heleDag = ruw({ hele_dag: true, start: null, eind: null, pauze_min: 0 });
+  const contracten = [{ geldig_vanaf: '2026-12-01', geldig_tot: null, norm_min: [480, 450, 480, 480, 480, 0, 0] }];
+  const metSd = L.normaliseer(heleDag, projecten, { standaard: { start: '08:00', eind: '16:30', pauze: '30' }, contracten });
+  assert.deepEqual([metSd.entry.start, metSd.entry.eind, metSd.entry.pauze_min, metSd.entry.duur_min], ['08:00', '16:30', 30, null]);
+  const eigenPauze = L.normaliseer({ ...heleDag, pauze_min: 45 }, projecten, { standaard: { start: '08:00', eind: '16:30', pauze: 30 } });
+  assert.equal(eigenPauze.entry.pauze_min, 45);
+  assert.equal(L.normaliseer(heleDag, projecten, { contracten }).entry.duur_min, 450); // dinsdag
+  assert.equal(L.normaliseer({ ...heleDag, datum: '2026-12-05' }, projecten, { contracten }).entry.duur_min, 480); // zaterdag, norm 0
+  assert.equal(L.normaliseer(heleDag, projecten, { standaard: { start: 'x', eind: '', pauze: 0 } }).entry.duur_min, 480);
+  // genoemde tijden gaan voor op hele_dag
+  assert.equal(L.normaliseer(ruw({ hele_dag: true }), projecten, { standaard: { start: '08:00', eind: '16:30', pauze: 30 } }).entry.start, '08:30');
 });
 
 test('avondblok over middernacht', () => {

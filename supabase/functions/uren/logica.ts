@@ -9,6 +9,7 @@ export type Project = { id: string; naam: string; klant: string; standaard_factu
 export type Ruw = {
   begrepen: boolean;
   vraag: string;
+  hele_dag: boolean;
   datum: string;
   type: "werk" | "verlof" | "ziek" | "feestdag" | "compensatie";
   start: string | null;
@@ -36,10 +37,11 @@ const ofNull = (schema: Record<string, unknown>) => ({ anyOf: [schema, { type: "
 export const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["begrepen", "vraag", "datum", "type", "start", "eind", "duur_min", "pauze_min", "locatie", "notitie", "projecten"],
+  required: ["begrepen", "vraag", "hele_dag", "datum", "type", "start", "eind", "duur_min", "pauze_min", "locatie", "notitie", "projecten"],
   properties: {
     begrepen: { type: "boolean", description: "false als de tekst geen bruikbare urenregistratie is" },
     vraag: { type: "string", description: "Bij begrepen=false: korte Nederlandse zin over wat ontbreekt. Anders leeg." },
+    hele_dag: { type: "boolean", description: "true als de gebruiker een hele of gewone werkdag noemt zonder tijden of duur" },
     datum: { type: "string", format: "date" },
     type: { type: "string", enum: ["werk", "verlof", "ziek", "feestdag", "compensatie"] },
     start: ofNull({ type: "string", description: "Starttijd HH:MM, 24-uurs" }),
@@ -110,17 +112,41 @@ export function nettoMin(e: Concept["entry"]): number | null {
   return e.start ? null : e.duur_min;
 }
 
+export type Standaarddag = { start: string; eind: string; pauze: number | string };
+export type Contract = { geldig_vanaf: string; geldig_tot: string | null; norm_min: number[] };
+
+// Normminuten van een datum volgens het contract; 0 als er geen norm geldt.
+export function normVoor(datum: string, contracten: Contract[]): number {
+  const c = contracten.find((p) => p.geldig_vanaf <= datum && (!p.geldig_tot || datum <= p.geldig_tot));
+  return c ? c.norm_min[(new Date(`${datum}T12:00:00Z`).getUTCDay() + 6) % 7] : 0;
+}
+
 // Controleert het antwoord van het model en zet het om naar een concept dat de app
 // en de database begrijpen. Gooit een Error met een Nederlandse melding bij onbruikbare invoer.
-export function normaliseer(ruw: Ruw, projecten: Project[]): Concept {
+// "Hele dag gewerkt" zonder tijden wordt de standaarddag van de gebruiker; is die niet
+// meegegeven (Siri), dan de normuren van die dag, en anders 8 uur.
+export function normaliseer(
+  ruw: Ruw, projecten: Project[],
+  opties: { standaard?: Standaarddag | null; contracten?: Contract[] } = {},
+): Concept {
   if (!ruw.begrepen) throw new Error(ruw.vraag || "Ik kon hier geen urenregistratie uit halen.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ruw.datum)) throw new Error("Ik kon de datum niet bepalen.");
-  const start = ruw.start && TIJD.test(ruw.start) ? ruw.start : null;
-  const eind = start && ruw.eind && TIJD.test(ruw.eind) ? ruw.eind : null;
+  let start = ruw.start && TIJD.test(ruw.start) ? ruw.start : null;
+  let eind = start && ruw.eind && TIJD.test(ruw.eind) ? ruw.eind : null;
+  let duur = start ? null : (ruw.duur_min != null && ruw.duur_min >= 0 ? ruw.duur_min : null);
+  let pauze = Math.max(0, ruw.pauze_min || 0);
+  if (ruw.type === "werk" && ruw.hele_dag && !start && duur == null) {
+    const sd = opties.standaard;
+    if (sd && TIJD.test(sd.start) && TIJD.test(sd.eind)) {
+      start = sd.start; eind = sd.eind;
+      if (!pauze) pauze = Math.max(0, Math.round(Number(sd.pauze)) || 0);
+    } else {
+      duur = normVoor(ruw.datum, opties.contracten ?? []) || 480;
+    }
+  }
   const entry: Concept["entry"] = {
-    datum: ruw.datum, type: ruw.type, start, eind,
-    duur_min: start ? null : (ruw.duur_min != null && ruw.duur_min >= 0 ? ruw.duur_min : null),
-    pauze_min: Math.max(0, ruw.pauze_min || 0), locatie: ruw.locatie, notitie: ruw.notitie.trim(),
+    datum: ruw.datum, type: ruw.type, start, eind, duur_min: duur,
+    pauze_min: pauze, locatie: ruw.locatie, notitie: ruw.notitie.trim(),
   };
   if (entry.type === "werk" && !start && entry.duur_min == null) {
     throw new Error("Ik mis de tijden of de duur. Zeg bijvoorbeeld 'van half negen tot vijf' of 'twee uur'.");
@@ -194,6 +220,7 @@ Zo lees je de zin:
 - Noemt de gebruiker geen dag, dan gaat het over vandaag. Relatieve dagen ("gisteren", "afgelopen vrijdag") reken je om naar een datum; een genoemde weekdag is de meest recente die niet in de toekomst ligt.
 - Tijden noteer je als HH:MM in 24 uur. "Half negen" is 08:30, "kwart over vijf" na een ochtendstart is 17:15. Kies de lezing die een normale werkdag oplevert, tenzij de gebruiker avond of nacht noemt.
 - Zijn er kloktijden genoemd, vul dan start en eind en laat duur_min leeg. Is alleen een duur genoemd ("twee uur gewerkt"), vul dan duur_min en laat start en eind leeg.
+- Noemt de gebruiker een hele dag of een gewone werkdag zonder tijden en zonder duur ("hele dag gewerkt", "gewoon gewerkt"), zet dan hele_dag op true en laat start, eind en duur_min leeg; de app vult de standaarddag in. In alle andere gevallen is hele_dag false.
 - pauze_min is 0 als er geen pauze genoemd is.
 - type is "werk", tenzij de gebruiker verlof, ziekte, een feestdag of het opnemen van tijd-voor-tijd of compensatie noemt. Een hele dag verlof, ziek of feestdag heeft geen tijden en geen duur.
 - locatie vul je alleen in als die genoemd is (thuis, kantoor, onderweg).
@@ -206,5 +233,5 @@ ${JSON.stringify(projecten.map((p) => ({ project_id: p.id, klant: p.klant, proje
 - aandeel_min vul je in als de gebruiker een hoeveelheid tijd voor dat project noemt. Laat het leeg als het project alle tijd of "de rest" krijgt.
 - facturabel_min of facturabel_pct vul je alleen in als de gebruiker iets over facturabel of declarabel zegt; anders laat je beide leeg en geldt de standaard van het project.
 
-Zet begrepen op false als de zin geen urenregistratie is of als bij werk zowel de tijden als de duur ontbreken, en leg in vraag in één korte zin uit wat je mist.`;
+Zet begrepen op false als de zin geen urenregistratie is of als bij werk de tijden en de duur ontbreken terwijl hele_dag false is, en leg in vraag in één korte zin uit wat je mist.`;
 }
