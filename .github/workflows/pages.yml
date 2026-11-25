@@ -24,17 +24,24 @@ jobs:
           node-version: 22
       - run: npm test
 
-  publiceer:
+  bouw:
     needs: test
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
           path: web
+
+  # Publiceren in een eigen job, zoals in GitHub's eigen voorbeeld: deploy-pages vond het
+  # artifact niet altijd terug wanneer het in dezelfde job net was geüpload.
+  publiceer:
+    needs: bouw
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v4
