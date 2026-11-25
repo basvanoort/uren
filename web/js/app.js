@@ -1,5 +1,6 @@
 import * as C from './calc.js';
 import { maakStore } from './store.js';
+import { PCLOUD_CLIENT_ID } from './config.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
@@ -18,6 +19,7 @@ let maand = C.vandaag().slice(0, 7);
 let dlg = null;
 let spraak = { bezig: false, melding: '' }; // toestand van het spraakveld
 let nieuwToken = ''; // net aangemaakt Siri-token, één keer zichtbaar
+let backup = null; // status van de pCloud-back-up: null = nog niet opgehaald
 
 // ---------- data ----------
 
@@ -342,6 +344,7 @@ function schermBeheer() {
       <label>Eind<input type="time" name="eind" value="${sd.eind}"></label>
       <label class="breed">Pauze (minuten)<input inputmode="numeric" name="pauze" value="${sd.pauze}"></label>
     </div>
+    ${store.demo ? '' : `<h2>Back-up naar pCloud</h2><div class="kaart">${backupBlok()}</div>`}
     ${store.demo ? '' : `<h2>Siri-opdrachten</h2>
     <div class="kaart">
       ${S.api_tokens.map((t) => `<div class="rij" style="margin-bottom:8px"><span class="groei">${esc(t.naam)}
@@ -375,6 +378,71 @@ function render() {
   for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('actief', b.dataset.tab === tab);
   const schermen = { vandaag: schermVandaag, week: schermWeek, rapport: schermRapport, beheer: schermBeheer };
   $('#scherm').innerHTML = schermen[tab]();
+}
+
+// ---------- back-up naar pCloud ----------
+
+const tijdstip = (iso) => new Date(iso).toLocaleString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+async function backupVraag(actie, extra = {}) {
+  try {
+    const res = await store.functie({ actie, ...extra });
+    backup = res.fout ? { ...(backup || {}), bezig: '', melding: res.bericht, fout: true } : { ...res, melding: res.bericht };
+  } catch (e) {
+    backup = { ...(backup || {}), bezig: '', melding: e.message, fout: true };
+  }
+  if (tab === 'beheer') render();
+}
+
+function backupBlok() {
+  if (!PCLOUD_CLIENT_ID) return '<p class="zacht" style="margin:0">Nog niet ingesteld: er is nog geen pCloud-app aan Uren gekoppeld.</p>';
+  if (backup === null) { backup = { bezig: 'Status ophalen…' }; backupVraag('backup-status'); }
+  const melding = backup.melding ? `<p class="${backup.fout ? 'min' : 'plus'}" style="margin:0 0 8px">${esc(backup.melding)}</p>` : '';
+  if (backup.bezig) return `<p class="zacht" style="margin:0">${esc(backup.bezig)}</p>`;
+  if (!backup.gekoppeld) {
+    return `${melding}<p style="margin:0 0 10px">Elke nacht komt er een kopie van al je gegevens in je pCloud, in de map "Uren backup". De laatste 60 dagen blijven bewaard.</p>
+      <button class="primair" data-act="backup-koppel">Koppel pCloud</button>`;
+  }
+  return `${melding}<p style="margin:0 0 6px">Gekoppeld${backup.pcloud_email ? ` met ${esc(backup.pcloud_email)}` : ''}. Elke nacht rond 03:15 komt er een back-up in de map "${esc(backup.map)}".</p>
+    <p class="zacht" style="margin:0 0 6px;font-size:.9rem">Laatste back-up: ${backup.laatste_backup ? `${esc(tijdstip(backup.laatste_backup))} (${esc(backup.laatste_bestand)})` : 'nog geen'}</p>
+    ${backup.laatste_fout ? `<p class="min" style="margin:0 0 6px;font-size:.9rem">Laatste poging mislukt (${esc(tijdstip(backup.laatste_poging))}): ${esc(backup.laatste_fout)}</p>` : ''}
+    <div class="rij" style="margin-top:10px"><button data-act="backup-nu">Nu een back-up maken</button>
+      <button class="gevaar" data-act="backup-ontkoppel">Ontkoppelen</button></div>`;
+}
+
+// Koppelen zonder doorsturen (pCloud "poll_token"): pCloud opent in een nieuw venster en de app
+// vraagt intussen bij beide pCloud-servers of je toestemming hebt gegeven. Daardoor werkt dit ook
+// vanuit de app op het beginscherm, die geen opslag deelt met Safari.
+async function koppelPcloud() {
+  const requestId = [...crypto.getRandomValues(new Uint8Array(20))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const q = new URLSearchParams({ client_id: PCLOUD_CLIENT_ID, response_type: 'poll_token', request_id: requestId });
+  window.open(`https://my.pcloud.com/oauth2/authorize?${q}`, '_blank'); // vóór de eerste await: telt als tik
+  backup = { ...backup, bezig: 'Geef in het pCloud-venster toestemming en kom daarna terug naar deze app…', melding: '' };
+  render();
+  const eind = Date.now() + 10 * 60000;
+  let klaar = false;
+  const vraag = async (host, locationid) => {
+    while (!klaar && Date.now() < eind) {
+      try {
+        const r = await fetch(`https://${host}/oauth2_token?${new URLSearchParams({ client_id: PCLOUD_CLIENT_ID, request_id: requestId })}`);
+        const d = await r.json();
+        if (d.result === 0 && d.access_token) return { access_token: d.access_token, locationid: d.locationid ?? locationid };
+      } catch { /* nog geen toestemming, of de app stond even op de achtergrond */ }
+      await new Promise((ok) => setTimeout(ok, 2000));
+    }
+    throw new Error('geen token');
+  };
+  try {
+    const token = await Promise.any([vraag('eapi.pcloud.com', 2), vraag('api.pcloud.com', 1)]);
+    klaar = true;
+    backup = { ...backup, bezig: 'Gekoppeld; eerste back-up maken…' };
+    render();
+    await backupVraag('backup-koppel', token);
+  } catch {
+    klaar = true;
+    backup = { ...backup, bezig: '', melding: 'Koppelen is niet gelukt of duurde te lang. Probeer het opnieuw.', fout: true };
+    render();
+  }
 }
 
 // ---------- bewerkvenster ----------
@@ -538,6 +606,12 @@ const acties = {
     nieuwToken = token;
   },
   async 'token-weg'(d) { nieuwToken = ''; await verwijder('api_tokens', d.id); },
+  'backup-koppel'() { koppelPcloud(); return 'geen-render'; },
+  'backup-nu'() { backup = { ...backup, bezig: 'Back-up maken…', melding: '' }; render(); backupVraag('backup-nu'); return 'geen-render'; },
+  'backup-ontkoppel'() {
+    if (!confirm('pCloud ontkoppelen? Er worden dan geen nachtelijke back-ups meer gemaakt. Bestaande back-ups blijven in pCloud staan.')) return 'geen-render';
+    backup = { ...backup, bezig: 'Ontkoppelen…', melding: '' }; render(); backupVraag('backup-ontkoppel'); return 'geen-render';
+  },
   'dlg-sluit'() { $('#dlg').close(); },
   'dlg-bewaar'() { return bewaarDlg(); },
   async 'entry-weg'() { $('#dlg').close(); await verwijder('entries', dlg.e.id); },

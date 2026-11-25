@@ -4,6 +4,9 @@
 //   parse     { tekst, standaarddag? } -> { bericht, id, concept }   tekst naar conceptregel, slaat niets op
 //   bevestig  { id }               -> { bericht }                slaat een eerder concept op
 //   klok      { richting, project? } -> { bericht }              richting: "in" of "uit"
+//   backup-koppel { access_token, locationid } -> status          koppelt pCloud en maakt meteen een back-up
+//   backup-status | backup-nu | backup-ontkoppel  -> status
+//   backup-alle                   (alleen de nachtelijke taak, met de sleutel uit tabel systeem)
 // Elk antwoord heeft een veld "bericht" dat een opdracht direct kan tonen of voorlezen.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
@@ -12,6 +15,7 @@ import {
   type Concept, lokaalNaarUtc, normaliseer, nuLokaal, plusDag, type Project, type Ruw,
   type Standaarddag, samenvatting, SCHEMA, systeemPrompt, zoekProject,
 } from "./logica.ts";
+import { controleerToken, MAP, PCLOUD_HOSTS, zetBackup } from "./pcloud.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -137,13 +141,101 @@ async function klok(user: { id: string; bron: string }, richting: string, projec
   return { bericht: `Ingeklokt om ${uurLokaal(nu.toISOString())}${staart}.` };
 }
 
+// ---------- back-up naar pCloud ----------
+
+const BACKUP_TABELLEN = ["klanten", "projecten", "entries", "verdeling", "contract_perioden", "spraak_log"];
+
+async function backupInhoud(userId: string): Promise<string> {
+  const tabellen: Record<string, unknown[]> = {};
+  for (const t of BACKUP_TABELLEN) {
+    const { data, error } = await db.from(t).select("*").eq("user_id", userId);
+    if (error) throw new Error(error.message);
+    tabellen[t] = data ?? [];
+  }
+  return JSON.stringify({ app: "uren", versie: 1, gemaakt_op: new Date().toISOString(), tabellen }, null, 1);
+}
+
+// deno-lint-ignore no-explicit-any
+async function maakBackup(rij: any): Promise<void> {
+  const nu = new Date().toISOString();
+  try {
+    const bestand = `uren-${nuLokaal().datum}.json`;
+    await zetBackup(rij.hostname, rij.access_token, bestand, await backupInhoud(rij.user_id));
+    await db.from("backup_koppeling").update({ laatste_backup: nu, laatste_poging: nu, laatste_bestand: bestand, laatste_fout: null })
+      .eq("user_id", rij.user_id);
+  } catch (e) {
+    const fout = e instanceof Error ? e.message : String(e);
+    await db.from("backup_koppeling").update({ laatste_poging: nu, laatste_fout: fout }).eq("user_id", rij.user_id);
+    throw e;
+  }
+}
+
+async function backupStatus(userId: string) {
+  const { data } = await db.from("backup_koppeling")
+    .select("pcloud_email, gekoppeld_op, laatste_backup, laatste_bestand, laatste_fout, laatste_poging")
+    .eq("user_id", userId).maybeSingle();
+  return data ? { gekoppeld: true, map: MAP, ...data } : { gekoppeld: false };
+}
+
+async function backupActie(userId: string, actie: string, body: Record<string, unknown>) {
+  if (actie === "backup-koppel") {
+    const host = PCLOUD_HOSTS[String(body.locationid ?? "")];
+    const token = String(body.access_token ?? "");
+    if (!host || !token) throw new Error("Onvolledige gegevens van pCloud ontvangen.");
+    const email = await controleerToken(host, token);
+    const { error } = await db.from("backup_koppeling").upsert({
+      user_id: userId, hostname: host, access_token: token, pcloud_email: email,
+      gekoppeld_op: new Date().toISOString(), laatste_fout: null,
+    });
+    if (error) throw new Error(error.message);
+  }
+  if (actie === "backup-ontkoppel") {
+    await db.from("backup_koppeling").delete().eq("user_id", userId);
+    return { bericht: "pCloud is ontkoppeld.", ...(await backupStatus(userId)) };
+  }
+  if (actie === "backup-koppel" || actie === "backup-nu") {
+    const { data: rij } = await db.from("backup_koppeling").select("*").eq("user_id", userId).maybeSingle();
+    if (!rij) throw new Error("pCloud is nog niet gekoppeld.");
+    await maakBackup(rij);
+    return { bericht: "Back-up gemaakt.", ...(await backupStatus(userId)) };
+  }
+  return { bericht: "", ...(await backupStatus(userId)) };
+}
+
+// De nachtelijke taak (pg_cron) stuurt de sleutel uit tabel systeem mee.
+async function isNachtTaak(req: Request): Promise<boolean> {
+  const bearer = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (bearer.length < 32) return false;
+  const { data } = await db.from("systeem").select("waarde").eq("naam", "backup_sleutel").maybeSingle();
+  return Boolean(data?.waarde) && (await sha256(data!.waarde)) === (await sha256(bearer));
+}
+
+async function backupAlle() {
+  const { data, error } = await db.from("backup_koppeling").select("*");
+  if (error) throw new Error(error.message);
+  let gelukt = 0;
+  for (const rij of data ?? []) {
+    try { await maakBackup(rij); gelukt++; } catch (e) { console.error("back-up mislukt", rij.user_id, e); }
+  }
+  return { bericht: `${gelukt} van ${data?.length ?? 0} back-ups gemaakt.` };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return antwoord({ bericht: "Gebruik POST." }, 405);
   try {
+    const body = await req.json().catch(() => ({}));
+    if (body.actie === "backup-alle") {
+      if (!(await isNachtTaak(req))) return antwoord({ bericht: "Geen toegang.", fout: true }, 401);
+      return antwoord(await backupAlle());
+    }
     const user = await gebruiker(req);
     if (!user) return antwoord({ bericht: "Niet ingelogd of ongeldig token.", fout: true }, 401);
-    const body = await req.json().catch(() => ({}));
+    if (typeof body.actie === "string" && body.actie.startsWith("backup-")) {
+      // Back-up beheren kan alleen vanuit de ingelogde app, niet met een Siri-token.
+      if (user.bron === "opdracht") return antwoord({ bericht: "Niet toegestaan met een Siri-token.", fout: true }, 403);
+      return antwoord(await backupActie(user.id, body.actie, body));
+    }
     switch (body.actie) {
       case "parse": {
         const tekst = String(body.tekst ?? "").trim();
